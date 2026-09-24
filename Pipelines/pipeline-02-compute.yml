@@ -1,0 +1,67 @@
+trigger:
+  paths:
+    include:
+      - terraform/compute/*
+      - pipelines/pipeline-02-compute.yml
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: vg-vm-secrets                       # Contains secret variable: vmAdminPassword
+  - name: azureServiceConnection
+    value: 'sc-azure-connection'
+  - name: resourceGroup
+    value: 'rg-tfstate-storage'
+  - name: storageAccount
+    value: 'sttfstateprod001'
+  - name: containerName
+    value: 'tfstate'
+  - name: tfStateKey
+    value: 'compute.tfstate'
+
+steps:
+- task: TerraformInstaller@1
+  displayName: 'Install Terraform'
+  inputs:
+    terraformVersion: 'latest'
+
+- task: AzureCLI@2
+  displayName: 'Fetch DCR Resource ID from Azure'
+  inputs:
+    azureSubscription: '$(azureServiceConnection)'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      DCR_ID=$(az monitor dcr show --resource-group "rg-monitoring-prod" --name "dcr-windows-vm-monitoring" --query id -o tsv)
+      echo "##vso[task.setvariable variable=dcrResourceId]$DCR_ID"
+
+- task: TerraformTaskV4@4
+  displayName: 'Terraform Init'
+  inputs:
+    provider: 'azurerm'
+    command: 'init'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/compute'
+    backendServiceArm: '$(azureServiceConnection)'
+    backendAzureRmResourceGroupName: '$(resourceGroup)'
+    backendAzureRmStorageAccountName: '$(storageAccount)'
+    backendAzureRmContainerName: '$(containerName)'
+    backendAzureRmKey: '$(tfStateKey)'
+
+- task: TerraformTaskV4@4
+  displayName: 'Terraform Plan'
+  inputs:
+    provider: 'azurerm'
+    command: 'plan'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/compute'
+    environmentServiceNameAzureRM: '$(azureServiceConnection)'
+    commandOptions: '-var="dcr_id=$(dcrResourceId)" -var="admin_password=$(vmAdminPassword)"'
+
+- task: TerraformTaskV4@4
+  displayName: 'Terraform Apply'
+  inputs:
+    provider: 'azurerm'
+    command: 'apply'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/compute'
+    environmentServiceNameAzureRM: '$(azureServiceConnection)'
+    commandOptions: '-var="dcr_id=$(dcrResourceId)" -var="admin_password=$(vmAdminPassword)"'
